@@ -1,0 +1,9 @@
+# bundle patch for dsh-skill-center: 把插件行插入 profile roster。
+# 作为 profile bundle 层生效（package.json 的 dsh.bundle.patch 字段），安装方式：
+#   dsh plugin --profile desktop add link:<repo>/dsh-skill-center
+#
+# 只插入一行：宿主半区负责 /api/skill-center 路由，浏览器半区（package.json
+# 的 exports["./client"]）负责侧栏「技能中心」入口与中栏预览页。
+- insert:
+    - id: skill-center
+      name: 'dsh-skill-center'

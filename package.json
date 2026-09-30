@@ -1,0 +1,54 @@
+{
+  "name": "dsh-skill-center",
+  "version": "1.0.0",
+  "description": "技能中心：侧栏入口 + 中栏技能浏览器。默认读 ~/.dsh/skills 与 ~/.workbuddy/skills 两个来源目录（组名、id、路径都可在界面里随时改），技能以卡片分块展示，可启用/停用、可在文件管理器中定位，点击卡片弹出详情看全文。",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mwk719/dsh-skill-center.git"
+  },
+  "homepage": "https://github.com/mwk719/dsh-skill-center#readme",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "skill",
+    "skill-center",
+    "cordis-plugin"
+  ],
+  "type": "module",
+  "icon": "icon.svg",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "engines": {
+      "dsh": ">=0.2.0-rc.1"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-layout"
+      ],
+      "platform": "web"
+    },
+    "manifestVersion": 1
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "icon.svg",
+    "README.md"
+  ],
+  "license": "MIT"
+}
