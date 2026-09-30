@@ -24,7 +24,7 @@ DSH 侧栏「技能中心」入口 + 中栏技能浏览器：顶部按来源目�
 ## 快速开始
 
 ```sh
-dsh plugin --profile <profile> add github:<owner>/<repo>   # 或 link:<本地路径>
+dsh plugin --profile <profile> add github:mwk719/dsh-skill-center   # 或 link:<本地路径>
 ```
 
 装完**刷新页面**即可（首次安装即时生效）；只有改动 `lib/index.js`（宿主半区）才需要重启
@@ -144,16 +144,25 @@ DSH 应用。完整的安装 / 卸载（含原始 git URL 与 monorepo 子目录
 ## 安装 / 卸载
 
 ```sh
-# 安装（link 到本仓库源码）
-dsh plugin --profile desktop add link:<仓库路径>/dsh-skill-center
+# 从 GitHub 安装（推荐）
+dsh plugin --profile <profile> add github:mwk719/dsh-skill-center
+
+# 也可以直接用仓库 URL（国内可套代理，见下）
+dsh plugin --profile <profile> add https://github.com/mwk719/dsh-skill-center.git
+
+# 本地开发：link 到本仓库源码
+dsh plugin --profile <profile> add link:<仓库路径>/dsh-skill-center
 
 # 卸载
-dsh plugin --profile desktop remove dsh-skill-center
+dsh plugin --profile <profile> remove dsh-skill-center
 ```
 
-安装后 profile 的 `package.json` 会多出 `"dsh-skill-center": "link:<仓库路径>/dsh-skill-center"`，
-并在 `dsh.profile.bundles` 追加 `dsh-skill-center`；bundle 行由本包 `cordis.patch.yml`
-插入（`id: skill-center`）。安装动作对 live profile 即时生效（无需重启）。
+也可以走插件市场：`dsh plugin --profile <profile> add dshmarket`，然后在 Settings → Plugins 里一键装。
+
+安装后 profile 的 `package.json` 会多出 `"dsh-skill-center": "github:mwk719/dsh-skill-center"`
+（link 安装则是 `"link:<仓库路径>/dsh-skill-center"`），并在 `dsh.profile.bundles` 追加
+`dsh-skill-center`；bundle 行由本包 `cordis.patch.yml` 插入（`id: skill-center`）。
+安装动作对 live profile 即时生效（**首次安装无需重启**）。
 
 ### ⚠️ 改代码后的生效方式
 
