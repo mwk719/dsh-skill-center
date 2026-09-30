@@ -147,7 +147,8 @@ DSH 应用。完整的安装 / 卸载（含原始 git URL 与 monorepo 子目录
 # 从 GitHub 安装（推荐）
 dsh plugin --profile <profile> add github:mwk719/dsh-skill-center
 
-# 也可以直接用仓库 URL（国内可套代理，见下）
+# 也可以直接用仓库 URL（国内访问 GitHub 慢时，可套一层代理，例如把
+# https://github.com/... 替换成 https://gh-proxy.com/https://github.com/...）
 dsh plugin --profile <profile> add https://github.com/mwk719/dsh-skill-center.git
 
 # 本地开发：link 到本仓库源码
