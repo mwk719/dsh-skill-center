@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Skill Center",
-    "description": "Browse skills from configurable source directories as cards: click to read the full SKILL.md, flip a switch to add or remove a skill from the agent's skill catalog, reveal it in the file manager, and edit the source directories."
+    "description": "Browse skills from configurable source directories as cards: click to read the full SKILL.md, flip a switch to add or remove a skill from the agent skill catalog. It also recognises WorkBuddy expert-team folders and shows avatar, description, tags and team members, registering the team lead prompt when switched on. Reveal files in the file manager and edit the source directories in the panel."
   }
 }
