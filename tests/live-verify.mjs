@@ -8,7 +8,9 @@
  * 包括真的改写文件、真的拉起文件管理器。
  *
  * 安全性：写操作只作用于本脚本在系统临时目录里新建的夹具技能；
- * 两个真实技能目录只被读取。来源目录改动会持久化，脚本结束前用 reset 还原。
+ * 两个真实技能目录只被读取。来源目录会被临时改（加一个夹具组），
+ * 脚本开头**快照**用户当前的来源目录，结束/异常时都按快照还原
+ * （只有运行前本就是内置默认态才用 reset）。
  *
  * 运行：
  *   node tests/live-verify.mjs             # 含一次真实的「打开文件夹」（会弹资源管理器）
@@ -64,6 +66,8 @@ await writeFile(demoFile, demoSource, 'utf8')
 console.log(`夹具：${fixtureRoot}\nGUI：${BASE}\n`)
 
 let restored = false
+let snapshotGroups = null
+let snapshotSource = null
 try {
 	// ── 1. 新路由是否已加载（旧模块会 401/没有 source 字段）────────────────
 	const listed = await api('/api/skill-center/list')
@@ -76,9 +80,15 @@ try {
 	} else {
 		// ── 2. 默认来源目录（数量随各人技能库而定，不作硬断言）──────────────
 		const groups = listed.body.groups
-		check('默认来源目录 = 内置默认', listed.body.source === 'default', `source=${listed.body.source}`)
-		check('内置默认两组：dsh技能 / workbuddy技能',
-			groups.length === 2 && groups[0].id === 'dsh' && groups[1].id === 'workbuddy',
+		// 快照用户当前的来源目录：本脚本会临时加一个夹具组，收尾必须按快照还原，
+		// 不能无脑 reset —— 那会删掉用户自己保存的组（实测踩过这个坑）。
+		snapshotGroups = groups.map((g) => ({ id: g.id, label: g.label, root: g.root }))
+		snapshotSource = listed.body.source
+		check('来源目录状态可读（内置默认 / 用户自定义）',
+			['default', 'file', 'config'].includes(listed.body.source), `source=${listed.body.source}`)
+		check('来源目录结构合法（每组带 id/label/root 且已完成扫描）',
+			groups.length > 0 && groups.every((g) => typeof g.id === 'string' && typeof g.label === 'string' &&
+				typeof g.root === 'string' && Array.isArray(g.skills)),
 			groups.map((g) => `${g.label}:${g.skills.length}`).join(' · '))
 		check('每项都带 kind/folder/linked 且字段类型正确',
 			groups.every((g) => g.skills.every((s) => (s.kind === 'file' || s.kind === 'dir') &&
@@ -161,19 +171,23 @@ try {
 		const remote = await fetch(`${BASE}/api/skill-center/list`, { headers: { 'X-Forwarded-For': '8.8.8.8' } })
 		check('本机请求正常（对照）', remote.status === 200, `status=${remote.status}`)
 
-		// ── 8. reset：还原来源目录 ────────────────────────────────────────
-		const reset = await api('/api/skill-center/groups', { method: 'POST', body: { reset: true } })
+		// ── 8. 还原来源目录：按开头快照恢复（原本就是默认态才 reset）────────
+		const expectIds = snapshotSource === 'default' ? ['dsh', 'workbuddy'] : snapshotGroups.map((g) => g.id)
+		const reset = await api('/api/skill-center/groups',
+			{ method: 'POST', body: snapshotSource === 'default' ? { reset: true } : { groups: snapshotGroups } })
 		restored = reset.status === 200
 		const finalList = await api('/api/skill-center/list')
-		check('reset 后回到内置默认两组',
-			finalList.body?.source === 'default' && finalList.body?.groups?.length === 2,
-			`source=${finalList.body?.source} groups=${finalList.body?.groups?.length}`)
+		const finalIds = (finalList.body?.groups ?? []).map((g) => g.id)
+		check('已按运行前快照还原来源目录（不破坏用户配置）',
+			JSON.stringify(finalIds) === JSON.stringify(expectIds),
+			`运行前 source=${snapshotSource} ids=[${snapshotGroups.map((g) => g.id)}] → 现在 source=${finalList.body?.source} ids=[${finalIds}]`)
 	}
 } finally {
-	if (!restored) {
+	if (!restored && snapshotSource !== null) {
 		try {
-			await api('/api/skill-center/groups', { method: 'POST', body: { reset: true } })
-			console.log('（收尾：已尝试 reset 还原来源目录）')
+			await api('/api/skill-center/groups',
+				{ method: 'POST', body: snapshotSource === 'default' ? { reset: true } : { groups: snapshotGroups } })
+			console.log('（收尾：已按运行前快照还原来源目录）')
 		} catch {}
 	}
 	await rm(base, { recursive: true, force: true })
