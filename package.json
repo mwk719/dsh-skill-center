@@ -1,7 +1,7 @@
 {
   "name": "dsh-skill-center",
-  "version": "1.0.0",
-  "description": "技能中心：侧栏入口 + 中栏技能浏览器。默认读 ~/.dsh/skills 与 ~/.workbuddy/skills 两个来源目录（组名、id、路径都可在界面里随时改），技能以卡片分块展示，可启用/停用、可在文件管理器中定位，点击卡片弹出详情看全文。",
+  "version": "1.1.0",
+  "description": "技能中心：侧栏入口 + 中栏技能浏览器。默认读 ~/.dsh/skills 与 ~/.workbuddy/skills 两个来源目录（组名、id、路径都可在界面里随时改），技能与 WorkBuddy 专家团（智能体）都以卡片分块展示，可启用/停用、可在文件管理器中定位，点击卡片弹出详情看全文。",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/mwk719/dsh-skill-center.git"

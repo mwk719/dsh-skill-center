@@ -101,18 +101,69 @@ DSH 应用。完整的安装 / 卸载（含原始 git URL 与 monorepo 子目录
 - 目录 / 文件是链接（junction）时同样列出，但标记 `linked: true` 并禁止写；
 - 跳过：以 `.` 开头的条目（`.git` / `.claude` / `.trash_*`）、`README.md`、
   以及没有 `SKILL.md` 的目录。
+- 目录里没有 `SKILL.md`、但有专家团清单 → **智能体 / 专家团**（`kind: agent`），见下一节。
 
 列表项的 `description` / `whenToUse` 取自 frontmatter（零依赖轻量解析，支持 `|` / `>`
 块标量），只读文件头 8 KB，不会把 200 KB+ 的技能文件整个读进内存。
+
+## 专家团 / 智能体目录形态
+
+WorkBuddy / CodeBuddy 的「专家团（团队型专家）」是**另一种目录形态**：目录里没有
+`SKILL.md`，而是自带清单 `plugin.json`。
+
+**判据**（按真实数据校准，避免误判技能）：
+
+1. 目录里有 `SKILL.md` → 按**技能**处理（即使它同时带 `.claude-plugin/plugin.json`，
+   例如社区里把技能打包成插件的 `web-access`）；
+2. 没有 `SKILL.md`，而 `.codebuddy-plugin/plugin.json` 或 `.claude-plugin/plugin.json`
+   里声明的 `agents[]` 非空 → 按**智能体**处理（`kind: agent`）；
+3. 清单解析失败 → 仍作为智能体列出，并给出「未接入原因：智能体清单无法解析」
+   （`list` 不会因此 500）；
+4. 只声明 `skills: ["./"]` 的技能型插件清单、且目录里没有 `SKILL.md` → 跳过。
+
+**显示什么**（清单字段 → 列表项，文案一律 `zh` → `en` → 回退 `name` / `description`）：
+
+| 清单字段 | 卡片 / 详情弹框 |
+| --- | --- |
+| `displayName` | 卡片标题（回退 `name` → 目录名） |
+| `displayDescription` | 卡片描述（回退 `description`） |
+| `profession` | 详情弹框头部的职衔 |
+| `tags[]` | 卡片与弹框的标签 chips（也参与搜索） |
+| `quickPrompts[]` | 弹框「团队帮你做」逐条 |
+| `members[]`（`displayName` / `profession` / `avatar` / `role`） | 弹框「团队成员」：各自头像 + 名字 + 职衔/角色；卡片上显示「N 人团队」 |
+| `expertType`（`team`）、`agents[]` | 列表项字段；`agents[]` 作为「N 份提示词」的来源 |
+| `avatar` / `members[].avatar` | 头像图，走 `GET /avatar` 服务 |
+| `agents[]` 里与 `agentName` 同名的那份 | **lead 提示词**：注册进会话技能表的正文，也是详情弹框的正文 |
+
+**开关 = 内存态，绝不写文件**：这类目录没有 `disable-model-invocation` 可改，所以
+开关只存进来源目录的持久化文件（`~/.dsh/skill-center.json`）的新字段：
+
+```json
+{
+  "version": 1,
+  "groups": [{ "id": "dsh", "label": "dsh技能", "root": "C:\\Users\\<用户名>\\.dsh\\skills" }],
+  "agents": { "dsh": { "ocpx-lead": true } }
+}
+```
+
+`agents` 字段**缺失 = 默认启用**，老文件（没有这个字段）照读不误。改开关时属性目录里的
+任何文件都**逐字节不变**（测试锁死了这一点）。启用时，lead 提示词会以 `agentId` 为技能名
+注册进 DSH 会话的技能表；停用即 dispose —— 与会话可见性的语义和技能完全一致。
+
+**头像路由**：`GET /api/skill-center/avatar?group=<gid>&id=<agentId>&which=lead|<memberId>`。
+`which` 只是**查表键**，服务端从本次扫描结果里取绝对路径，并二次校验「必须落在该
+agent 目录内」+ 扩展名白名单（`png/jpg/jpeg/webp/gif/svg`），查不到一律 404 ——
+客户端传什么都不可能读到目录外或被当路径使用。
 
 ## 路由
 
 | 路由 | 方法 | 说明 |
 | --- | --- | --- |
-| `/api/skill-center/list` | GET | 技能清单（含 `enabled` / `kind` / `folder` / `linked`）+ `source` |
-| `/api/skill-center/read?group=&id=` | GET | 单个技能正文（上限 512 KB） |
-| `/api/skill-center/set-enabled` | POST | 启用/停用，body `{group,id,enabled}` |
+| `/api/skill-center/list` | GET | 技能 + 智能体清单（含 `enabled` / `kind` / `folder` / `linked`）+ `source` |
+| `/api/skill-center/read?group=&id=` | GET | 单个技能正文（智能体 = lead 提示词；上限 512 KB） |
+| `/api/skill-center/set-enabled` | POST | 启用/停用，body `{group,id,enabled}`（智能体只写 store） |
 | `/api/skill-center/reveal` | POST | 在系统文件管理器中定位，body `{group,id}` |
+| `/api/skill-center/avatar?group=&id=&which=` | GET | 专家团头像（`which=lead` 或成员 id；仅图片，404 兜底） |
 | `/api/skill-center/groups` | GET | 当前来源目录 + `source` + `storePath` + `defaults` |
 | `/api/skill-center/groups` | POST | 改写来源目录（`{groups:[...]}`）或 `{reset:true}` 恢复默认 |
 
@@ -121,7 +172,7 @@ DSH 应用。完整的安装 / 卸载（含原始 git URL 与 monorepo 子目录
 
 ## 安全模型
 
-- 六条路由都只接受同源 loopback 请求：socket 远端必须是 loopback（127/8、`::1`、
+- 七条路由都只接受同源 loopback 请求：socket 远端必须是 loopback（127/8、`::1`、
   IPv4-mapped），`Host` 必须是 loopback authority，`Sec-Fetch-Site: cross-site` 拒绝，
   `Origin` 存在时必须与 `Host` 同源；`X-Forwarded-For` 从不信任。
 - 写路由（set-enabled / reveal / groups）与读路由**身份只认「最新一次扫描」解析出的
@@ -191,11 +242,13 @@ node tests/client-render.test.mjs  # 端到端：伪 loader/react/slots 渲染�
 
 覆盖：目录扫描口径（含 junction / 无 frontmatter）、停用写入与启用还原、
 符号链接拒绝改写、reveal 命令构造、来源目录读写与校验与优先级、
-页签分组、卡片数与开关、⋯ 菜单三动作、详情弹框与三条关闭路径、搜索过滤。
+页签分组、卡片数与开关、⋯ 菜单三动作、详情弹框与三条关闭路径、搜索过滤、
+**专家团（agent）识别与字段口径、坏清单不崩、头像路由与目录穿越防护、
+agent 开关只写 store（目录文件逐字节不变）、store 向后兼容**。
 
 `client-render` 的伪 hooks 会按 deps 重跑 effect 并执行 cleanup（贴近 React），
-因此 `document` 级 Esc 监听也被真实驱动；所有断言都基于夹具技能（`alpha` / `beta` /
-`linked` / 重名夹具），不依赖任何本机技能库内容。
+因此 `document` 级 Esc 监听也被真实驱动；所有断言都基于夹具条目（`alpha` / `beta` /
+`expert`（迷你专家团）/ `linked` / 重名夹具），不依赖任何本机技能库内容。
 
 ## 配置（可选）
 

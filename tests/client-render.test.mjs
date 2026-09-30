@@ -281,12 +281,12 @@ globalThis.fetch = makeFetch(fx.byPath)
 searchBoxOf(tree).props.onKeyDown({ key: 'Escape' })
 tree = render()
 byAction(tree, 'refresh').props.onClick()
-assert.ok(await waitFor(() => cardsOf(render()).length === 3), '刷新后应显示夹具的 3 个技能（alpha/beta/linked）')
+assert.ok(await waitFor(() => cardsOf(render()).length === 4), '刷新后应显示夹具的 4 个条目（alpha/beta/expert/linked）')
 tree = render()
 assert.equal(tabsOf(tree).length, 1, '夹具只有一个来源目录')
 assert.equal(tabsOf(tree)[0].props['data-dsc-tab'], 'fx')
 assert.ok(textOf(tree).includes('插件配置'), '来源标记应显示“插件配置”（config.groups）')
-console.log('夹具页签 OK：1 个来源目录 fx · 3 个技能 · 来源标记「插件配置」')
+console.log('夹具页签 OK：1 个来源目录 fx · 4 个条目（含专家团）· 来源标记「插件配置」')
 
 // ── 详情弹框（夹具技能 alpha：正文 + 大小 + 「打开文件夹」按钮）──
 const alphaCard = cardById(tree, 'alpha')
@@ -336,10 +336,96 @@ tree = render()
 const betaOnly = cardsOf(tree)
 assert.equal(betaOnly.length, 1, `搜 beta 应只剩 1 张卡片，实际 ${betaOnly.length}`)
 assert.equal(betaOnly[0].props['data-dsc-card'], 'beta')
+// 专家团的标签也参与搜索
+searchBoxOf(tree).props.onChange({ target: { value: 'Fixture' } })
+tree = render()
+const tagOnly = cardsOf(tree)
+assert.equal(tagOnly.length, 1, `按标签搜应命中专家团，实际 ${tagOnly.length} 张`)
+assert.equal(tagOnly[0].props['data-dsc-card'], 'expert')
 searchBoxOf(tree).props.onKeyDown({ key: 'Escape' })
 tree = render()
-assert.equal(cardsOf(tree).length, 3, 'Esc 清空后应恢复 3 张卡片')
-console.log('搜索 OK：搜 beta → 1 张卡片；Esc 清空 → 恢复 3 张卡片')
+assert.equal(cardsOf(tree).length, 4, 'Esc 清空后应恢复 4 个条目')
+console.log('搜索 OK：搜 beta → 1 张卡片；按标签搜 Fixture → 专家团；Esc 清空 → 恢复 4 个条目')
+
+// ── 专家团卡片（头像走 avatar 路由 + 显示名 + 标签 + 团队徽标 + 开关/菜单）──
+const expertCard = cardById(tree, 'expert')
+assert.ok(expertCard !== undefined, '专家团应渲染成一张卡片')
+assert.equal(expertCard.props['data-dsc-kind'], 'agent', '卡片应带 kind=agent')
+const cardAvatar = findOne(expertCard, (node) => node.type === 'img')
+assert.ok(cardAvatar !== undefined, '专家团卡片应用头像图（而不是首字母块）')
+assert.ok(
+	String(cardAvatar.props.src).startsWith('api/skill-center/avatar'),
+	`头像 URL 必须是文档相对路径，实际：${cardAvatar.props.src}`,
+)
+assert.ok(String(cardAvatar.props.src).includes('group=fx'), '头像 URL 应带 group')
+assert.ok(String(cardAvatar.props.src).includes('which=lead'), '卡片头像应是 lead')
+assert.ok(textOf(expertCard).includes('夹具专家团'), '卡片显示名应取清单里的 zh 文案')
+assert.ok(
+	findOne(expertCard, (node) => node.props?.['data-dsc-tags'] === 'expert') !== undefined,
+	'卡片应渲染标签 chips',
+)
+assert.ok(
+	findOne(expertCard, (node) => node.props?.['data-dsc-team'] === 'expert') !== undefined,
+	'卡片应有团队徽标',
+)
+assert.ok(textOf(expertCard).includes('3 人团队'), `徽标应显示人数，实际：${textOf(expertCard)}`)
+assert.ok(
+	findOne(expertCard, (node) => node.props?.['data-dsc-toggle'] !== undefined) !== undefined,
+	'专家团也要有启用开关',
+)
+assert.ok(
+	findOne(expertCard, (node) => node.props?.['data-dsc-menu'] !== undefined) !== undefined,
+	'专家团也要有 ⋯ 菜单',
+)
+console.log('专家团卡片 OK：头像图（avatar 路由）+ 显示名 + 标签 chips + 「3 人团队」+ 开关/菜单')
+
+// ── 专家团详情弹框：profession / 团队帮你做 / 团队成员 / lead 提示词 ──
+expertCard.props.onClick()
+tree = render()
+assert.ok(backdropOf(tree) !== undefined, '点专家团卡片应打开详情弹框')
+assert.ok(await waitFor(() => textOf(render()).includes('# expert 提示词')), '弹框应加载 lead 提示词正文')
+tree = render()
+const agentDialog = textOf(tree)
+assert.ok(agentDialog.includes('夹具主理人'), '弹框应显示 profession')
+assert.ok(
+	findOne(tree, (node) => node.props?.['data-dsc-agent-docs'] === 'expert') !== undefined,
+	'弹框应显示提示词份数（agentDocs）',
+)
+assert.ok(agentDialog.includes('2 份提示词'), `应显示「N 份提示词」，实际：${agentDialog.slice(0, 200)}`)
+assert.ok(
+	findOne(tree, (node) => node.props?.['data-dsc-quick-prompts'] === 'expert') !== undefined,
+	'弹框应有「团队帮你做」区块',
+)
+assert.ok(agentDialog.includes('团队帮你做'), '区块标题应为「团队帮你做」')
+assert.ok(agentDialog.includes('帮我分派一下'), '应逐条列出 quickPrompts')
+assert.ok(
+	findOne(tree, (node) => node.props?.['data-dsc-members'] === 'expert') !== undefined,
+	'弹框应有「团队成员」区块',
+)
+assert.ok(agentDialog.includes('团队成员（3）'), `成员区块应显示人数，实际：${agentDialog.slice(0, 200)}`)
+assert.ok(agentDialog.includes('夹具总调'), '应列出 lead 的名字')
+assert.ok(agentDialog.includes('Helper'), '应列出成员名字（缺 zh 时回退 en）')
+assert.ok(agentDialog.includes('越界探针'), '应列出没有头像的成员')
+const dialogAvatars = findAll(
+	backdropOf(tree),
+	(node) => node.type === 'img' && String(node.props?.src ?? '').includes('api/skill-center/avatar'),
+)
+assert.ok(dialogAvatars.length >= 2, `弹框内应渲染 lead 头像 + 有头像的成员，实际 ${dialogAvatars.length}`)
+assert.ok(
+	dialogAvatars.some((node) => String(node.props.src).includes('which=helper')),
+	'成员头像应按成员 id 请求',
+)
+assert.equal(
+	dialogAvatars.some((node) => String(node.props.src).includes('which=ghost')),
+	false,
+	'没有头像的成员（越界探针）不该发图片请求',
+)
+console.log('专家团弹框 OK：profession + 团队帮你做 + 团队成员（头像按成员 id 走 avatar 路由）+ lead 正文')
+
+// 关掉弹框，不影响后面的断言
+findOne(tree, (node) => node.props?.['aria-label'] === '关闭' && node.type === 'button').props.onClick()
+tree = render()
+assert.equal(backdropOf(tree), undefined, '✕ 应能关掉专家团弹框')
 
 // linked 是 junction：可列出，但开关必须被禁用
 const linkedCard = cardById(tree, 'linked')

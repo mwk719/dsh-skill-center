@@ -7,7 +7,7 @@
  * 运行：node tests/skill-bridge.test.mjs
  */
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -106,6 +106,88 @@ assert.equal(on.json.registered, true, '启用后应立刻回到会话技能表'
 assert.equal(fx.registry.entries.has('alpha'), true, '注册表里应重新注册')
 assert.equal(on.json.registry.registered, fxIds.length, '注册数应恢复')
 console.log('开关 ↔ 会话可见性 OK：停用即摘掉、启用即挂回（夹具技能，无副作用）')
+
+// ═══════════ C2. 专家团（agent）：注册正文取 lead 提示词，开关只写 store ═══════════
+const agentId = fixture.agent.id
+const agentEntry = fx.registry.entries.get(agentId)
+assert.ok(agentEntry !== undefined, '启用中的专家团应进会话技能表（name = agentId）')
+assert.equal(agentEntry.registration.name, agentId, '注册名应是 agentId')
+assert.equal(agentEntry.registration.path, fixture.agent.leadDoc, '注册正文应取 lead 提示词文件')
+assert.ok(agentEntry.registration.content.includes('# expert 提示词'), '注册内容应是 lead 提示词正文')
+assert.equal(agentEntry.registration.content.includes('name: expert-lead'), false, '注册内容应剥掉 frontmatter')
+assert.ok(agentEntry.registration.description.includes('迷你专家团'), 'description 应取清单里的中文描述')
+assert.equal(agentEntry.registration.source, 'runtime', '与技能一样优先 runtime')
+console.log(`专家团注册 OK：name=${agentId} · 正文 = lead 提示词（已剥 frontmatter）· description 来自清单`)
+
+// 开关：只改 store —— 目录里的文件字节、目录项都必须一个不变
+const manifestBefore = await readFile(fixture.agent.manifest)
+const leadBefore = await readFile(fixture.agent.leadDoc)
+const dirBefore = (await readdir(fixture.agent.dir)).sort()
+const agentOff = await call(fx.byPath, 'POST', '/api/skill-center/set-enabled', {
+	group: 'fx',
+	id: agentId,
+	enabled: false,
+})
+assert.equal(agentOff.status, 200)
+assert.equal(agentOff.json.kind, 'agent')
+assert.equal(agentOff.json.enabled, false)
+assert.equal(agentOff.json.disabled, true)
+assert.equal(agentOff.json.changed, true, '首次停用应算变更')
+assert.equal(agentOff.json.registered, false, '停用后应立刻退出会话技能表')
+assert.equal(fx.registry.entries.has(agentId), false, '注册表里也应被 dispose')
+assert.equal(agentOff.json.registry.registered, fxIds.length - 1, '注册数应减一')
+assert.deepEqual(await readFile(fixture.agent.manifest), manifestBefore, '清单文件必须逐字节不变')
+assert.deepEqual(await readFile(fixture.agent.leadDoc), leadBefore, 'lead 提示词必须逐字节不变')
+assert.deepEqual((await readdir(fixture.agent.dir)).sort(), dirBefore, '专家团目录不该新增/删除任何文件')
+const storedAgents = JSON.parse(await readFile(fixture.store, 'utf8'))
+assert.deepEqual(storedAgents.agents, { fx: { [agentId]: false } }, '停用应落盘到 store.agents')
+assert.deepEqual(storedAgents.groups, [GROUP], 'groups 应原样保留')
+const agentOffItem = (await call(fx.byPath, 'GET', '/api/skill-center/list')).json.groups[0].skills.find(
+	(skill) => skill.id === agentId,
+)
+assert.equal(agentOffItem.enabled, false, 'list 应反映 store 里的停用态')
+assert.equal(agentOffItem.registered, false)
+console.log('专家团停用 OK：只写 store.agents，目录文件字节与目录项完全未变')
+
+const agentOn = await call(fx.byPath, 'POST', '/api/skill-center/set-enabled', {
+	group: 'fx',
+	id: agentId,
+	enabled: true,
+})
+assert.equal(agentOn.json.enabled, true)
+assert.equal(agentOn.json.changed, true, '从停用改回启用也算变更')
+assert.equal(agentOn.json.registered, true, '启用后应挂回会话技能表')
+assert.equal(fx.registry.entries.has(agentId), true)
+assert.equal(agentOn.json.registry.registered, fxIds.length, '注册数应恢复')
+const agentAgain = await call(fx.byPath, 'POST', '/api/skill-center/set-enabled', {
+	group: 'fx',
+	id: agentId,
+	enabled: true,
+})
+assert.equal(agentAgain.json.changed, false, '已是启用态时不应再算变更')
+assert.deepEqual(await readFile(fixture.agent.leadDoc), leadBefore, '整个来回都不该动到 lead 提示词')
+console.log('专家团启用 OK：挂回技能表；重复启用 changed=false（依旧不碰文件）')
+
+// ── store 向后兼容：老文件没有 agents 字段照读；坏字段按默认（启用）处理 ──
+assert.deepEqual(fx.host.parseAgentStates(undefined), {}, '缺字段 ⇒ 空表')
+assert.deepEqual(fx.host.parseAgentStates({ fx: { [agentId]: false } }), { fx: { [agentId]: false } })
+assert.deepEqual(
+	fx.host.parseAgentStates({ 'BAD ID': { x: true }, fx: 'nope', ok: { a: 'yes' } }),
+	{},
+	'非法分组 id / 非对象 / 非布尔值都应被忽略',
+)
+assert.equal(fx.host.agentEnabled({}, 'fx', agentId), true, '缺字段 = 启用')
+assert.equal(fx.host.agentEnabled({ fx: { [agentId]: false } }, 'fx', agentId), false)
+const legacyStore = join(fixture.root, 'legacy-store.json')
+await writeFile(legacyStore, JSON.stringify({ version: 1, groups: [GROUP] }, null, 2), 'utf8')
+const legacy = await startHost({}, { ...NO_SPAWN, DSH_SKILL_CENTER_STORE: legacyStore })
+const legacyList = await call(legacy.byPath, 'GET', '/api/skill-center/list')
+assert.equal(legacyList.json.source, 'file', '老 store 应照常读到 groups')
+const legacyAgent = legacyList.json.groups[0].skills.find((skill) => skill.id === agentId)
+assert.equal(legacyAgent.enabled, true, '老 store 没有 agents 字段 ⇒ 智能体默认启用')
+assert.equal(legacyAgent.registered, true, '且应正常进会话技能表')
+assert.equal(legacyList.json.registry.failed, 0)
+console.log('store 向后兼容 OK：老文件（无 agents 字段）照读，智能体默认启用并注册')
 
 // source 被拒时自动退回 bundled（官方范例里跑通的那个取值）
 const fallback = await startHost(

@@ -9,7 +9,7 @@
  * 运行：node tests/host-scan.test.mjs
  */
 import assert from 'node:assert/strict'
-import { readdir, readFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -20,7 +20,7 @@ const NONEXISTENT_STORE = join(tmpdir(), 'dsh-skill-center-does-not-exist', 'ski
 
 // ───────────────────────── A. 真实目录（只读） ─────────────────────────
 const real = await startHost({}, { DSH_SKILL_CENTER_STORE: NONEXISTENT_STORE, DSH_SKILL_CENTER_NO_SPAWN: '1' })
-assert.equal(real.routes.length, 5, '应注册 5 条路由')
+assert.equal(real.routes.length, 6, '应注册 6 条路由（list/read/set-enabled/reveal/groups/avatar）')
 for (const route of real.routes) assert.equal(route.kind, 'exact')
 console.log(`路由 OK：${real.routes.map((route) => route.path.replace('/api/skill-center/', '')).join(' / ')}`)
 
@@ -91,6 +91,7 @@ assert.equal(ids.includes('.hidden'), false, '隐藏目录应跳过')
 assert.equal(ids.includes('noskill'), false, '无 SKILL.md 的目录应跳过')
 assert.equal(ids.includes('README'), false, 'README.md 应跳过')
 assert.equal(ids.includes('linked'), fixture.linked, `linked 是否列出应与能否建链接一致（linked=${fixture.linked}）`)
+assert.ok(ids.includes('expert'), '专家团目录（有 .codebuddy-plugin/plugin.json）应被识别为 agent 条目')
 const alpha = fxGroup.skills.find((skill) => skill.id === 'alpha')
 const beta = fxGroup.skills.find((skill) => skill.id === 'beta')
 assert.equal(alpha.kind, 'dir')
@@ -100,6 +101,55 @@ assert.equal(alpha.enabled, true)
 assert.equal(alpha.folder, join(fixture.root, 'alpha'))
 assert.ok(beta.description === '' || typeof beta.description === 'string')
 console.log(`夹具清单 OK：${ids.join(', ')}（α 有 frontmatter、β 无 frontmatter、隐藏/无 SKILL.md/README 均跳过）`)
+
+// ── 专家团（agent 形态）：字段、文案回退、成员、头像可达性 ──────────
+const expert = fxGroup.skills.find((skill) => skill.id === 'expert')
+assert.equal(expert.kind, 'agent', 'expert 应是 agent 条目')
+assert.equal(expert.name, '夹具专家团', '显示名应取清单里的 zh 文案')
+assert.equal(expert.profession, '夹具主理人', 'profession（zh）应带出')
+assert.equal(expert.expertType, 'team', 'expertType 应带出')
+assert.deepEqual(expert.tags, ['夹具', 'Fixture'], 'tags 应按 zh → en 取值')
+assert.deepEqual(expert.quickPrompts, ['帮我分派一下', 'Route this'], 'quickPrompts 应按 zh → en 取值')
+assert.deepEqual(
+	expert.agentDocs,
+	['agents/lead.md', 'team/helper/agents/helper.md'],
+	'agentDocs 应是清单里声明的提示词相对路径',
+)
+assert.equal(expert.description, '夹具：一个迷你专家团，用来验证 agent 形态。', '描述应取 displayDescription.zh')
+assert.equal(expert.folder, fixture.agent.dir, 'folder 应是专家团目录')
+assert.equal(expert.path, fixture.agent.leadDoc, 'path 应指向 lead 提示词（注册 / read / reveal 都用它）')
+assert.equal(expert.enabled, true, 'store 里没有该字段时默认启用')
+assert.equal(expert.linked, false, '普通目录不算链接')
+assert.ok(expert.size > 0, '应带出 lead 提示词的大小')
+assert.equal(expert.hasAvatar, true, 'lead 头像存在')
+assert.deepEqual(
+	expert.members.map((member) => member.id),
+	['expert', 'helper', 'ghost'],
+	'members 应逐个带出',
+)
+const helperMember = expert.members.find((member) => member.id === 'helper')
+assert.equal(helperMember.name, 'Helper', '成员名缺 zh 时应回退 en')
+assert.equal(helperMember.profession, '操作员', '成员 profession 应取 zh')
+assert.equal(helperMember.role, 'member', '成员 role 应带出')
+assert.equal(helperMember.hasAvatar, true, 'helper 头像存在')
+assert.equal(
+	expert.members.find((member) => member.id === 'ghost').hasAvatar,
+	false,
+	'越界头像（../../secret.png）必须判成「没有头像」',
+)
+assert.equal(
+	JSON.stringify(expert).includes(fixture.agent.secret),
+	false,
+	'响应里不该出现越界文件的绝对路径',
+)
+assert.equal(
+	JSON.stringify(expert).includes(fixture.agent.leadAvatar),
+	false,
+	'响应里不该出现头像的绝对路径（客户端只拿 which 去请求）',
+)
+console.log(
+	`专家团 OK：${expert.name} · ${expert.expertType} · ${expert.members.length} 人 · tags=${expert.tags.join('/')} · 头像=${expert.hasAvatar}`,
+)
 
 // ── read：夹具技能的正文（内容类断言放这里，与真实技能库无关）──
 const shown = await call(fx.byPath, 'GET', '/api/skill-center/read?group=fx&id=alpha')
@@ -115,6 +165,52 @@ assert.equal(shownBeta.status, 200)
 assert.ok(shownBeta.json.content.includes('# beta'), '单文件技能的正文也应可读')
 assert.equal(shownBeta.json.kind, 'file')
 console.log('read OK：夹具 alpha / beta 正文可读，kind/linked/enabled 字段齐全')
+
+// ── 专家团：read 返回 lead 提示词（与技能一致：原始文件内容，弹框直接复用）──
+const agentRead = await call(fx.byPath, 'GET', '/api/skill-center/read?group=fx&id=expert')
+assert.equal(agentRead.status, 200)
+assert.equal(agentRead.json.kind, 'agent')
+assert.equal(agentRead.json.path, fixture.agent.leadDoc, 'read 的目标应是 lead 提示词')
+assert.ok(agentRead.json.content.includes('# expert 提示词'), 'read 应返回 lead 提示词正文')
+assert.equal(agentRead.json.content.includes('"expertType"'), false, '不应把清单 JSON 当正文返回')
+assert.ok(agentRead.json.bytes > 0, '应返回字节数')
+console.log('专家团 read OK：详情弹框能直接复用（返回 lead 提示词）')
+
+// ── 头像路由：路径只来自扫描结果 + 目录内校验 + 扩展名白名单 ──────────
+const avatarCall = async (query) => {
+	const response = makeResponse()
+	await fx.byPath
+		.get('/api/skill-center/avatar')
+		.handler(makeRequest('GET', `/api/skill-center/avatar?${query}`), response)
+	return response.result
+}
+const leadShot = await avatarCall('group=fx&id=expert&which=lead')
+assert.equal(leadShot.statusCode, 200, 'lead 头像应 200')
+assert.equal(leadShot.headers['content-type'], 'image/png')
+assert.ok(Buffer.isBuffer(leadShot.body), '头像应返回原始字节（不是 JSON）')
+assert.deepEqual(leadShot.body, await readFile(fixture.agent.leadAvatar), '返回字节应与磁盘上的 PNG 完全一致')
+const helperShot = await avatarCall('group=fx&id=expert&which=helper')
+assert.equal(helperShot.statusCode, 200)
+assert.deepEqual(helperShot.body, await readFile(fixture.agent.helperAvatar), '成员头像应是各自那份文件')
+assert.equal((await avatarCall('group=fx&id=expert&which=ghost')).statusCode, 404, '越界成员头像应 404')
+assert.equal((await avatarCall('group=fx&id=expert&which=nobody')).statusCode, 404, '未知 which 应 404')
+assert.equal(
+	(await avatarCall('group=fx&id=expert&which=../../secret.png')).statusCode,
+	404,
+	'which 里的穿越串不能命中任何文件',
+)
+assert.equal(
+	(await avatarCall('group=fx&id=expert&which=..%2F..%2Fsecret.png')).statusCode,
+	404,
+	'编码后的穿越串同样 404',
+)
+assert.equal((await avatarCall('group=nope&id=expert&which=lead')).statusCode, 400, '未知分组 400')
+assert.equal(
+	(await avatarCall('group=fx&id=alpha&which=lead')).statusCode,
+	404,
+	'技能条目没有头像（kind 不是 agent）→ 404',
+)
+console.log('头像路由 OK：lead/成员头像返回真 PNG 字节；越界 / 未知 which / 非 agent 一律 404')
 
 const alphaFile = join(fixture.root, 'alpha', 'SKILL.md')
 const betaFile = join(fixture.root, 'beta.md')
@@ -254,7 +350,34 @@ assert.equal(remoteGroups.result.statusCode, 403)
 // 夹具里不应残留临时文件
 const leftovers = (await readdir(join(fixture.root, 'alpha'))).filter((name) => name.includes('.tmp'))
 assert.deepEqual(leftovers, [], '不应残留 .tmp 文件')
+assert.deepEqual(
+	(await readdir(fixture.agent.dir)).filter((name) => name.includes('.tmp')),
+	[],
+	'专家团目录不该出现临时文件',
+)
+
+// ── 清单坏掉的专家团：list 不能崩，条目要带原因，不变式仍成立 ──────────
+const brokenRoot = await mkdtemp(join(tmpdir(), 'dsh-skill-center-broken-'))
+await mkdir(join(brokenRoot, 'expert-broken', '.codebuddy-plugin'), { recursive: true })
+await writeFile(join(brokenRoot, 'expert-broken', '.codebuddy-plugin', 'plugin.json'), '{ 这不是合法 JSON', 'utf8')
+const broken = await startHost(
+	{ groups: [{ id: 'broken', label: '坏清单', root: brokenRoot }] },
+	{ DSH_SKILL_CENTER_STORE: join(brokenRoot, 'store.json'), DSH_SKILL_CENTER_NO_SPAWN: '1' },
+)
+const brokenList = await call(broken.byPath, 'GET', '/api/skill-center/list')
+assert.equal(brokenList.status, 200, '清单解析失败时 list 仍应 200')
+const brokenItem = brokenList.json.groups[0].skills.find((skill) => skill.id === 'expert-broken')
+assert.ok(brokenItem !== undefined, '坏清单的目录仍应作为 agent 条目列出')
+assert.equal(brokenItem.kind, 'agent')
+assert.equal(brokenItem.registered, false, '解析失败 ⇒ 不该进技能表')
+assert.ok(
+	String(brokenItem.registerError ?? '').includes('无法解析'),
+	`应给出未接入原因：${brokenItem.registerError}`,
+)
+assert.equal(brokenList.json.registry.registered + brokenList.json.registry.failed, 1, '不变式：启用 1 = 注册 0 + 失败 1')
+await rm(brokenRoot, { recursive: true, force: true })
+console.log('坏清单 OK：list 不崩，条目带「无法解析」原因，registered + failed 不变式仍成立')
 
 await fixture.cleanup()
 void makeFetch
-console.log('\n✅ host-scan: 全部断言通过（真实目录只读 + 夹具写入 + 围栏/错误路径）')
+console.log('\n✅ host-scan: 全部断言通过（真实目录只读 + 夹具写入 + 围栏/错误路径 + 专家团）')

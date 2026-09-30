@@ -169,15 +169,68 @@ description: 夹具技能 linked（junction 目录）
 正文。
 `
 
+/** 两张 1×1 真 PNG（Pillow 生成并回读校验过），用来验头像路由返回的是**图片字节**。 */
+const LEAD_PNG_B64 =
+	'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mO45ur4HwAFrQJcCCRDDgAAAABJRU5ErkJggg=='
+const HELPER_PNG_B64 =
+	'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mPwyvn+HwAFXgKtDVB5HAAAAABJRU5ErkJggg=='
+
+/** 夹具 lead 提示词（带 frontmatter：注册正文里必须被剥掉）。 */
+const AGENT_LEAD_DOC = `---
+name: expert-lead
+description: 夹具 lead 提示词
+---
+
+# expert 提示词
+夹具专家团的 lead 提示词正文。
+`
+
+/** 迷你专家团清单：覆盖 zh/en 文案、tags、quickPrompts、members、越界头像探针。 */
+const AGENT_MANIFEST = {
+	name: 'expert',
+	version: '1.0.0',
+	description: 'Mini expert team fixture (英文兜底)',
+	expertType: 'team',
+	agentName: 'expert',
+	teamInfo: { leadAgent: 'expert', memberAgents: ['helper', 'ghost'] },
+	displayName: { zh: '夹具专家团', en: 'Fixture Expert' },
+	profession: { zh: '夹具主理人' },
+	displayDescription: { zh: '夹具：一个迷你专家团，用来验证 agent 形态。' },
+	avatar: 'avatars/expert.png',
+	tags: [{ zh: '夹具' }, { en: 'Fixture' }],
+	quickPrompts: [{ zh: '帮我分派一下' }, { en: 'Route this' }],
+	agents: ['./agents/lead.md', './team/helper/agents/helper.md'],
+	skills: [],
+	members: [
+		{
+			id: 'expert',
+			displayName: { zh: '夹具总调' },
+			profession: { zh: '主理人' },
+			avatar: 'avatars/expert.png',
+			role: 'lead',
+		},
+		{
+			id: 'helper',
+			displayName: { en: 'Helper' },
+			profession: { zh: '操作员' },
+			avatar: './team/helper/avatars/expert.png',
+			role: 'member',
+		},
+		// 越界探针：指向专家团目录之外的 secret.png，必须被解析成「没有头像」
+		{ id: 'ghost', displayName: { zh: '越界探针' }, avatar: '../../secret.png', role: 'member' },
+	],
+}
+
 /**
  * 造一个临时技能根：
  *   alpha/SKILL.md    目录型技能（有 frontmatter）
  *   beta.md           单文件技能（无 frontmatter）
+ *   expert/           专家团（agent 形态，见 AGENT_MANIFEST）
  *   .hidden/SKILL.md  点开头，应跳过
  *   noskill/README.md 目录里没有 SKILL.md，应跳过
  *   README.md         文档，应跳过
  *   linked/SKILL.md   符号链接目录（若系统不允许建链接则跳过该项）
- * @returns {Promise<{root: string, store: string, linked: boolean, cleanup: () => Promise<void>}>}
+ * @returns {Promise<{root, store, linked, agent, cleanup}>} agent 里带专家团的关键路径
  */
 export async function makeFixture() {
 	const base = await mkdtemp(join(tmpdir(), 'dsh-skill-center-'))
@@ -191,6 +244,31 @@ export async function makeFixture() {
 	await writeFile(join(root, '.hidden', 'SKILL.md'), ALPHA, 'utf8')
 	await writeFile(join(root, 'noskill', 'README.md'), 'not a skill\n', 'utf8')
 	await writeFile(join(root, 'README.md'), 'docs\n', 'utf8')
+
+	// ── 迷你专家团（agent 形态）──
+	const expertDir = join(root, 'expert')
+	const agentDir = join(expertDir, '.codebuddy-plugin')
+	const helperDir = join(expertDir, 'team', 'helper')
+	await mkdir(agentDir, { recursive: true })
+	await mkdir(join(expertDir, 'agents'), { recursive: true })
+	await mkdir(join(expertDir, 'avatars'), { recursive: true })
+	await mkdir(join(expertDir, 'references'), { recursive: true })
+	await mkdir(join(helperDir, 'agents'), { recursive: true })
+	await mkdir(join(helperDir, 'avatars'), { recursive: true })
+	const manifestFile = join(agentDir, 'plugin.json')
+	const leadDoc = join(expertDir, 'agents', 'lead.md')
+	const leadAvatar = join(expertDir, 'avatars', 'expert.png')
+	const helperAvatar = join(helperDir, 'avatars', 'expert.png')
+	const secret = join(base, 'secret.png')
+	await writeFile(manifestFile, JSON.stringify(AGENT_MANIFEST, null, 2), 'utf8')
+	await writeFile(leadDoc, AGENT_LEAD_DOC, 'utf8')
+	await writeFile(join(expertDir, 'agents', 'README.md'), '不是提示词\n', 'utf8')
+	await writeFile(join(helperDir, 'agents', 'helper.md'), '# helper 提示词\n', 'utf8')
+	await writeFile(join(expertDir, 'references', 'notes.md'), '# 参考资料\n', 'utf8')
+	await writeFile(leadAvatar, Buffer.from(LEAD_PNG_B64, 'base64'))
+	await writeFile(helperAvatar, Buffer.from(HELPER_PNG_B64, 'base64'))
+	// 越界探针：真文件，就放在技能根之外 —— 守卫失效时会被读到
+	await writeFile(secret, Buffer.from(HELPER_PNG_B64, 'base64'))
 
 	let linked = false
 	try {
@@ -206,6 +284,17 @@ export async function makeFixture() {
 		root,
 		store,
 		linked,
+		agent: {
+			id: 'expert',
+			dir: expertDir,
+			manifest: manifestFile,
+			leadDoc,
+			helperDoc: join(helperDir, 'agents', 'helper.md'),
+			leadAvatar,
+			helperAvatar,
+			/** 专家团目录之外的真图片：越界头像必须读不到它。 */
+			secret,
+		},
 		cleanup: async () => {
 			await rm(base, { recursive: true, force: true })
 		},

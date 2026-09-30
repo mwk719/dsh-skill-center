@@ -63,7 +63,45 @@ description: 实机验证用的临时技能，脚本结束即删除。
 这行正文必须原样保留。
 `
 await writeFile(demoFile, demoSource, 'utf8')
-console.log(`夹具：${fixtureRoot}\nGUI：${BASE}\n`)
+
+// 夹具里的迷你智能体（专家团形态）：验真实进程能不能识别 / 注册 / 出头像
+const LEAD_PNG = Buffer.from(
+	'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mO45ur4HwAFrQJcCCRDDgAAAABJRU5ErkJggg==',
+	'base64',
+)
+const agentDir = join(fixtureRoot, 'live-expert')
+const agentManifestFile = join(agentDir, '.codebuddy-plugin', 'plugin.json')
+const agentLeadDoc = join(agentDir, 'agents', 'live-expert.md')
+await mkdir(join(agentDir, '.codebuddy-plugin'), { recursive: true })
+await mkdir(join(agentDir, 'agents'), { recursive: true })
+await mkdir(join(agentDir, 'avatars'), { recursive: true })
+await writeFile(
+	agentManifestFile,
+	JSON.stringify(
+		{
+			name: 'live-expert',
+			version: '1.0.0',
+			expertType: 'team',
+			agentName: 'live-expert',
+			displayName: { zh: '实机验证专家团' },
+			description: 'live fixture agent',
+			profession: { zh: '夹具主理人' },
+			avatar: 'avatars/expert.png',
+			agents: ['./agents/live-expert.md'],
+			tags: [{ zh: '夹具' }],
+			quickPrompts: [{ zh: '实机验证一下' }],
+			members: [
+				{ id: 'live-expert', displayName: { zh: '实机总调' }, avatar: 'avatars/expert.png', role: 'lead' },
+			],
+		},
+		null,
+		2,
+	),
+	'utf8',
+)
+await writeFile(agentLeadDoc, '# 实机验证专家团提示词\n夹具正文。\n', 'utf8')
+await writeFile(join(agentDir, 'avatars', 'expert.png'), LEAD_PNG)
+console.log(`夹具：${fixtureRoot}（技能 + 智能体）\nGUI：${BASE}\n`)
 
 let restored = false
 let snapshotGroups = null
@@ -91,8 +129,19 @@ try {
 				typeof g.root === 'string' && Array.isArray(g.skills)),
 			groups.map((g) => `${g.label}:${g.skills.length}`).join(' · '))
 		check('每项都带 kind/folder/linked 且字段类型正确',
-			groups.every((g) => g.skills.every((s) => (s.kind === 'file' || s.kind === 'dir') &&
+			groups.every((g) => g.skills.every((s) => (s.kind === 'file' || s.kind === 'dir' || s.kind === 'agent') &&
 				typeof s.folder === 'string' && typeof s.enabled === 'boolean' && typeof s.linked === 'boolean')))
+		// 真实目录里若已有专家团（kind=agent）就顺手验字段口径；没有就跳过
+		const realAgents = groups.flatMap((g) => g.skills.filter((s) => s.kind === 'agent').map((s) => ({ group: g.id, skill: s })))
+		if (realAgents.length === 0) {
+			console.log('（真实目录里没有 kind=agent 的专家团，跳过真实目录 agent 断言）')
+		} else {
+			check('真实目录里的专家团字段完整（tags/quickPrompts/members/agentDocs 类型正确）',
+				realAgents.every(({ skill }) => Array.isArray(skill.tags) && Array.isArray(skill.quickPrompts) &&
+					Array.isArray(skill.members) && Array.isArray(skill.agentDocs) &&
+					typeof skill.hasAvatar === 'boolean' && typeof skill.profession === 'string'),
+				realAgents.map(({ skill }) => `${skill.id}:${skill.members.length}人`).join(' · '))
+		}
 		check('read 路由可读首个技能正文',
 			await (async () => {
 				const first = groups.flatMap((g) => g.skills.map((s) => ({ group: g.id, skill: s })))[0]
@@ -127,8 +176,43 @@ try {
 			`status=${saved.status} source=${saved.body?.source}`)
 		const afterSave = await api('/api/skill-center/list')
 		const fixtureGroup = afterSave.body?.groups?.find((g) => g.id === 'live-fixture')
-		check('保存后 list 立刻反映新来源目录', fixtureGroup !== undefined && fixtureGroup.skills.length === 1,
-			fixtureGroup === undefined ? '找不到 live-fixture' : `live-fixture 技能=${fixtureGroup.skills.map((s) => s.id).join(',')}`)
+		check('保存后 list 立刻反映新来源目录', fixtureGroup !== undefined && fixtureGroup.skills.length === 2,
+			fixtureGroup === undefined ? '找不到 live-fixture' : `live-fixture 条目=${fixtureGroup.skills.map((s) => s.id).join(',')}`)
+
+		// ── 4b. 专家团（agent）：真实进程识别 / 注册 / 头像 ────────────────
+		const liveAgent = fixtureGroup?.skills?.find((s) => s.id === 'live-expert')
+		check('专家团被真实宿主识别为 kind=agent，字段齐全',
+			liveAgent !== undefined && liveAgent.kind === 'agent' &&
+				liveAgent.name === '实机验证专家团' && liveAgent.expertType === 'team' &&
+				Array.isArray(liveAgent.members) && liveAgent.members.length === 1 &&
+				liveAgent.members[0].id === 'live-expert' && liveAgent.tags[0] === '夹具' &&
+				liveAgent.quickPrompts[0] === '实机验证一下' && liveAgent.hasAvatar === true &&
+				Array.isArray(liveAgent.agentDocs) && liveAgent.agentDocs.length === 1,
+			liveAgent === undefined
+				? '没识别成 agent'
+				: `${liveAgent.name} · ${liveAgent.members.length} 人 · tags=${JSON.stringify(liveAgent.tags)} · avatar=${liveAgent.hasAvatar}`)
+		check('专家团已进 DSH 会话技能表（registered=true，注册名 = agentId）',
+			liveAgent?.registered === true && (afterSave.body?.registry?.names ?? []).includes('live-expert'),
+			`registered=${liveAgent?.registered} names 含 live-expert=${(afterSave.body?.registry?.names ?? []).includes('live-expert')}`)
+		check('专家团 read 返回 lead 提示词正文',
+			await (async () => {
+				const one = await api('/api/skill-center/read?group=live-fixture&id=live-expert')
+				return one.status === 200 && one.body?.kind === 'agent' &&
+					String(one.body?.content ?? '').includes('实机验证专家团提示词')
+			})())
+		const avatarResponse = await fetch(`${BASE}/api/skill-center/avatar?group=live-fixture&id=live-expert&which=lead`)
+		const avatarBytes = new Uint8Array(await avatarResponse.arrayBuffer())
+		check('头像路由返回真实图片字节（真宿主、真文件）',
+			avatarResponse.status === 200 &&
+				String(avatarResponse.headers.get('content-type')).startsWith('image/png') &&
+				avatarBytes.length === LEAD_PNG.length &&
+				Buffer.compare(Buffer.from(avatarBytes), LEAD_PNG) === 0,
+			`status=${avatarResponse.status} type=${avatarResponse.headers.get('content-type')} bytes=${avatarBytes.length}`)
+		const badWhich = await fetch(`${BASE}/api/skill-center/avatar?group=live-fixture&id=live-expert&which=nope`)
+		const traversalWhich = await fetch(`${BASE}/api/skill-center/avatar?group=live-fixture&id=live-expert&which=../../secret.png`)
+		check('头像路由拒绝未知 which 与穿越串（都 404）',
+			badWhich.status === 404 && traversalWhich.status === 404,
+			`nope=${badWhich.status} 穿越=${traversalWhich.status}`)
 		const storePath = got.body?.storePath
 		check('持久化文件已写出（位置由 API 返回，不写死本机路径）',
 			typeof storePath === 'string' && existsSync(storePath), `storePath=${storePath}`)
