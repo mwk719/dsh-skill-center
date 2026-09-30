@@ -295,3 +295,48 @@ agent 开关只写 store（目录文件逐字节不变）、store 向后兼容**
 - 同名技能：只注册第一个，另一个带原因（界面显示「未接入」）。
 - `source` 兼容性：把注册表限制为只接受 `bundled` 时自动退回，仍全部注册成功。
 - 认证方式：`node tests/skill-bridge.test.mjs`（无需浏览器/无需重启）。
+
+## 常见问题
+
+**安装时报 `git@github.com: Permission denied (publickey)`**
+
+`github:owner/repo` 这种简写（不带 ref）在安装时，pnpm 会用 **SSH** 去 `git ls-remote`
+解析默认分支；这台机器若没把 SSH 公钥注册到 GitHub，就会在这里失败（`exit 128`，
+`application: failed`）。三种解法任选：
+
+```sh
+# ① 固定 commit（推荐，免掉 ls-remote 解析）
+dsh plugin --profile <profile> add github:mwk719/dsh-skill-center#<40 位 commit sha>
+
+# ② 直接用 HTTPS 的 git URL
+dsh plugin --profile <profile> add https://github.com/mwk719/dsh-skill-center.git
+
+# ③ 给 GitHub 加一把 deploy key（仓库 Settings → Deploy keys），让 SSH 这条路也通
+```
+
+排查前先确认 HTTPS 可达：`git ls-remote --heads https://github.com/mwk719/dsh-skill-center.git`。
+
+⚠️ **卸载前先备份**：`remove` 成功而紧接着 `add` 失败，插件就停在"已卸载"状态
+（侧栏入口与技能桥一起消失）。先备份 profile 的 `package.json` 或记住原来的依赖串，
+失败时用同一条 `add` 还原即可 —— 来源目录与每个开关的状态都存在
+`~/.dsh/skill-center.json`，**卸载不会丢**。
+
+**组件启动时默认读取哪些目录？**
+
+首次启动（尚无 `~/.dsh/skill-center.json`）只读两个内置来源目录：
+
+| 组 | 默认路径 |
+| --- | --- |
+| `dsh技能` | `~/.dsh/skills` |
+| `workbuddy技能` | `~/.workbuddy/skills` |
+
+技能与智能体都从这两个根下扫描：
+
+- `<root>/<目录>/SKILL.md` —— 目录型技能
+- `<root>/<文件>.md` —— 单文件技能（根下一层）
+- `<root>/<目录>/.codebuddy-plugin/plugin.json`（`agents[]` 非空，且该目录**没有** `SKILL.md`）
+  —— WorkBuddy 专家团 / 智能体
+
+**默认不含** `~/.agents/skills`（DSH 的官方用户技能根）—— 想让它生效，在面板「来源目录」里
+加一行，或把里面的技能链接进上面两个根之一。一旦你在面板里保存过来源目录，就以
+`~/.dsh/skill-center.json` 为准（面板右下角显示「内置默认 / 已自定义」），启动时不再回落到默认值。
