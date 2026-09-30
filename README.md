@@ -142,7 +142,7 @@ WorkBuddy / CodeBuddy 的「专家团（团队型专家）」是**另一种目�
 {
   "version": 1,
   "groups": [{ "id": "dsh", "label": "dsh技能", "root": "C:\\Users\\<用户名>\\.dsh\\skills" }],
-  "agents": { "dsh": { "ocpx-lead": true } }
+  "agents": { "dsh": { "<专家目录名>": true } }
 }
 ```
 
