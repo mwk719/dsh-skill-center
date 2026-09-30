@@ -52,13 +52,30 @@ export function makeRemoteRequest(method, url) {
 }
 
 /**
+ * 空的 WorkBuddy 根（整进程复用一个）：默认注入给每个 startHost，
+ * 让"默认来源目录"只含两个固定组，不被开发机真实的市场目录干扰断言。
+ * 需要验证市场发现的测试显式传 `WORKBUDDY_HOME` 覆盖它。
+ */
+let isolatedWorkbuddyHome
+async function emptyWorkbuddyHome() {
+	if (isolatedWorkbuddyHome === undefined) {
+		isolatedWorkbuddyHome = await mkdtemp(join(tmpdir(), 'dsh-skill-center-wb-'))
+	}
+	return isolatedWorkbuddyHome
+}
+
+/**
  * 挂载真实宿主半区并抓取路由。
  * @param config 插件 config（含 groups 时即作为来源目录）
- * @param env 注入的环境变量（临时 store / 演练开关）
+ * @param env 注入的环境变量（临时 store / 演练开关 / WORKBUDDY_HOME）
  * @param options.allowedSources 假技能注册表接受的 source（默认 runtime + bundled）
  */
 export async function startHost(config = {}, env = {}, options = {}) {
-	for (const [key, value] of Object.entries(env)) process.env[key] = value
+	const effectiveEnv = { ...env }
+	if (effectiveEnv.WORKBUDDY_HOME === undefined) {
+		effectiveEnv.WORKBUDDY_HOME = await emptyWorkbuddyHome()
+	}
+	for (const [key, value] of Object.entries(effectiveEnv)) process.env[key] = value
 	const allowedSources = options.allowedSources ?? ['runtime', 'bundled']
 	/** 假技能注册表：记录注册/注销，供测试断言「会话能不能看到这个技能」。 */
 	const registry = { entries: new Map(), registered: 0, disposed: 0 }

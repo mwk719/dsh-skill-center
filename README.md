@@ -233,6 +233,7 @@ dsh plugin --profile <profile> remove dsh-skill-center
 node tests/host-scan.test.mjs      # 宿主：扫描口径 + 夹具写入 + 围栏/错误路径
 node tests/skill-bridge.test.mjs   # 会话可见性 ↔ 启用开关（运行时注册桥）
 node tests/client-render.test.mjs  # 端到端：伪 loader/react/slots 渲染真实客户端半区
+node tests/default-groups.test.mjs # 默认来源目录：WorkBuddy 专家市场发现 + "扫到有才加" 过滤
 ```
 
 三个测试都用 `tests/_harness.mjs`，且**全部夹具驱动**：写操作落在 `mkdtemp` 出来的
@@ -323,14 +324,37 @@ dsh plugin --profile <profile> add https://github.com/mwk719/dsh-skill-center.gi
 
 **组件启动时默认读取哪些目录？**
 
-首次启动（尚无 `~/.dsh/skill-center.json`）只读两个内置来源目录：
+首次启动（尚无 `~/.dsh/skill-center.json`）有两个**固定**内置来源目录：
 
 | 组 | 默认路径 |
 | --- | --- |
 | `dsh技能` | `~/.dsh/skills` |
 | `workbuddy技能` | `~/.workbuddy/skills` |
 
-技能与智能体都从这两个根下扫描：
+在此基础上，默认态还会**发现 WorkBuddy 专家市场**：扫 `<WorkBuddy 根>/plugins/marketplaces/*/plugins`，
+每个存在的市场成为一个可选来源目录：
+
+| 市场目录名 | 生成的组 id | 显示名 |
+| --- | --- | --- |
+| `experts` | `workbuddy-experts` | `workbuddy专家` |
+| `my-experts` | `workbuddy-my-experts` | `workbuddy专家（我的）` |
+| `cb_teams_marketplace` | `workbuddy-cb-teams-marketplace` | `workbuddy团队` |
+| 其它市场 | `workbuddy-<市场名 slug>` | `workbuddy专家（<市场名>）` |
+
+（组 id 只允许小写字母/数字/连字符，所以市场名里的 `_` 等字符一律折成 `-`。）
+
+**"扫到有才加"**：可选组只有在它里面**真的存在智能体**（`kind:'agent'`）时才被注入 ——
+判据是**智能体数**而不是总条目数，所以纯插件市场（例如 `codebuddy-plugins-official`，只有技能型
+插件）不会被带进来；市场目录不存在时也不会出现空组。两个固定组不参与这个过滤
+（即使为空也照常显示，行为与以前一致）。
+
+- `<WorkBuddy 根>` = 环境变量 `WORKBUDDY_HOME`；未设置时取 `~/.workbuddy`（**测试注入点**）。
+- 发现**只在默认态**（`source=default`）发生。一旦你在面板里保存过来源目录，就完全以
+  `~/.dsh/skill-center.json` 为准（面板右下角显示「内置默认 / 已自定义」），不再注入任何可选组。
+- `GET /groups` 的 `defaults` 与 `{reset:true}` 用的是同一份过滤后的列表 ——
+  "重置后看到的"就是"重置后生效的"。
+
+技能与智能体都从每个来源根下扫描：
 
 - `<root>/<目录>/SKILL.md` —— 目录型技能
 - `<root>/<文件>.md` —— 单文件技能（根下一层）
@@ -338,5 +362,4 @@ dsh plugin --profile <profile> add https://github.com/mwk719/dsh-skill-center.gi
   —— WorkBuddy 专家团 / 智能体
 
 **默认不含** `~/.agents/skills`（DSH 的官方用户技能根）—— 想让它生效，在面板「来源目录」里
-加一行，或把里面的技能链接进上面两个根之一。一旦你在面板里保存过来源目录，就以
-`~/.dsh/skill-center.json` 为准（面板右下角显示「内置默认 / 已自定义」），启动时不再回落到默认值。
+加一行，或把里面的技能链接进上面两个根之一。
